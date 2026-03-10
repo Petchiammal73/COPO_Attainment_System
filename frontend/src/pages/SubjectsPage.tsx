@@ -32,6 +32,7 @@ const SubjectsPage: React.FC = () => {
   const [editDialogOpen, setEditDialogOpen] = useState<boolean>(false);
 
   const [form, setForm] = useState<{
+    courseCode:string;
     subjectCode: string;
     subjectName: string;
     academicYear: string;
@@ -40,17 +41,19 @@ const SubjectsPage: React.FC = () => {
     courseType: "theory" | "lab" | "theory+lab";
     numberOfCOs: number;
   }>({
+    courseCode:"",
     subjectCode: "",
     subjectName: "",
     academicYear: "2024-25",
     semester: 1,
-    regulation: "R2020",
+    regulation: "R2021",
     courseType: "theory",
     numberOfCOs: 5,
   });
 
   const [editForm, setEditForm] = useState<{
     id: number;
+    courseCode:string;
     subjectCode: string;
     subjectName: string;
     academicYear: string;
@@ -60,6 +63,7 @@ const SubjectsPage: React.FC = () => {
     numberOfCOs: number;
   }>({
     id: 0,
+    courseCode:"",
     subjectCode: "",
     subjectName: "",
     academicYear: "2024-25",
@@ -80,7 +84,7 @@ const SubjectsPage: React.FC = () => {
   );
 
   const handleAdd = async () => {
-    if (!form.subjectCode || !form.subjectName) {
+    if (!form.courseCode || !form.subjectCode || !form.subjectName) {
       toast({
         title: "Validation Error",
         description: "Subject code and name are required",
@@ -91,6 +95,7 @@ const SubjectsPage: React.FC = () => {
 
     try {
       const subjectData = {
+        courseCode:form.courseCode,
         subjectCode: form.subjectCode,
         subjectName: form.subjectName,
         academicYear: form.academicYear,
@@ -109,6 +114,7 @@ const SubjectsPage: React.FC = () => {
 
       setDialogOpen(false);
       setForm({
+        courseCode:"",
         subjectCode: "",
         subjectName: "",
         academicYear: "2024-25",
@@ -149,6 +155,7 @@ const SubjectsPage: React.FC = () => {
   const handleEditOpen = (subject: Subject) => {
     setEditForm({
       id: subject.id,
+      courseCode:subject.courseCode,
       subjectCode: subject.subjectCode,
       subjectName: subject.subjectName,
       academicYear: subject.academicYear,
@@ -161,7 +168,7 @@ const SubjectsPage: React.FC = () => {
   };
 
   const handleEdit = async () => {
-    if (!editForm.subjectCode || !editForm.subjectName) {
+    if (!editForm.courseCode || !editForm.subjectCode || !editForm.subjectName) {
       toast({
         title: "Validation Error",
         description: "Subject code and name are required",
@@ -182,6 +189,7 @@ const SubjectsPage: React.FC = () => {
       setEditDialogOpen(false);
       setEditForm({
         id: 0,
+        courseCode:"",
         subjectCode: "",
         subjectName: "",
         academicYear: "2024-25",
@@ -228,6 +236,16 @@ const SubjectsPage: React.FC = () => {
               <DialogTitle>Add New Subject</DialogTitle>
             </DialogHeader>
             <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="space-y-2">
+                <Label>Course Code</Label>
+                <Input
+                  value={form.courseCode}
+                  onChange={(e) =>
+                    setForm({ ...form, courseCode: e.target.value })
+                  }
+                  placeholder="C101"
+                />
+              </div>
               <div className="space-y-2">
                 <Label>Subject Code</Label>
                 <Input
@@ -352,6 +370,16 @@ const SubjectsPage: React.FC = () => {
             <DialogTitle>Edit Subject</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="space-y-2">
+              <Label>Course Code</Label>
+              <Input
+                value={editForm.courseCode}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, courseCode: e.target.value })
+                }
+                placeholder="C101"
+              />
+            </div>
             <div className="space-y-2">
               <Label>Subject Code</Label>
               <Input

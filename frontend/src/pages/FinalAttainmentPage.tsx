@@ -6,13 +6,12 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Target, Award, Download, FileText, Loader2, GraduationCap, AlertCircle } from "lucide-react";
+import { Target, Award, Download, FileText, Loader2, GraduationCap, AlertCircle, Database } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, Legend } from "recharts";
 import { useSubjects } from "@/context/SubjectContext";
 import { useToast } from "@/hooks/use-toast";
 
-// 🔥 FIXED: No process.env - Direct URL
-const API_URL = "http://localhost:8000";  // Your FastAPI backend
+const API_URL = "http://localhost:8000";
 
 interface COAttainment {
   co: string;
@@ -45,7 +44,6 @@ const getLevel = (value: number): number => {
   return 0;
 };
 
-// 🔥 FIXED: Use your existing 3 endpoints (direct/indirect/matrix)
 const fetchAnalyticsData = async (subjectId: string) => {
   console.log("🔍 Fetching from:", {
     direct: `${API_URL}/analytics/direct-summary/${subjectId}`,
@@ -83,12 +81,15 @@ const FinalAttainmentPage: React.FC = () => {
   const [matrixData, setMatrixData] = useState<number[][]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
 
   const subject = subjects.find((s) => s.id === selectedSubject);
 
-  // 🔥 FIXED: Load data from your 3 endpoints
+  // 🔥 FIXED: Define these FIRST before using them
+  const hasData = coData.length > 0;
+
   const loadAnalyticsData = useCallback(async (subjectId: string) => {
     if (!subjectId) {
       setCoData([]);
@@ -172,20 +173,77 @@ const FinalAttainmentPage: React.FC = () => {
     }
   }, [toast]);
 
+  // 🔥 FIXED: Define attainmentStatus BEFORE save function
+  const attainmentStatus = useMemo(() => {
+    const avgCO = coData.length ? (coData.reduce((s, c) => s + c.final, 0) / coData.length).toFixed(1) : "0";
+    const coL3Count = coData.filter(c => c.final >= 75).length;
+    const poL2Count = poData.filter(p => p.level >= 2).length;
+    const psoL2Count = psoData.filter(p => p.level >= 2).length;
+    const overallAttained = parseFloat(avgCO) >= 70 && coL3Count >= 4 && poL2Count >= 8 && psoL2Count >= 1;
+
+    return { avgCO, coL3Count, poL2Count, psoL2Count, overallAttained, coDataLength: coData.length, poDataLength: poData.length, psoDataLength: psoData.length };
+  }, [coData, poData, psoData]);
+
+  // 🔥 FIXED: Now saveFinalAttainmentToBackend can use attainmentStatus safely
+const saveFinalAttainmentToBackend = useCallback(async () => {
+  if (!selectedSubject || !hasData) {
+    toast({ title: "⚠️ No Data", description: "Select subject and load data first", variant: "destructive" });
+    return;
+  }
+
+  try {
+    setIsSaving(true);
+    const token = localStorage.getItem('token');
+
+    const finalAttainmentData = {
+      subject_id: String(selectedSubject),  // "2"
+      direct_percentages: coData.map(co => co.direct),
+      indirect_percentages: coData.map(co => co.indirect),
+      final_percentages: coData.map(co => co.final),
+      final_levels: coData.map(co => getLevel(co.final))
+    };
+
+    console.log("💾 Sending to /analytics/final-attainment:", finalAttainmentData);
+
+    // 🔥 CORRECT ENDPOINT - Matches your analytics router
+    const response = await fetch(`${API_URL}/analytics/final-attainment`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        ...(token && { "Authorization": `Bearer ${token}` })
+      },
+      body: JSON.stringify(finalAttainmentData)
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`HTTP ${response.status}: ${error}`);
+    }
+
+    toast({
+      title: "💾 Final Attainment Saved!",
+      description: `${coData.length} COs → Backend`,
+    });
+
+  } catch (error: any) {
+    console.error("Final save failed:", error);
+    toast({
+      title: "⚠️ Save Failed",
+      description: `Computed locally ✓ (${error.message})`,
+      variant: "destructive",
+    });
+  } finally {
+    setIsSaving(false);
+  }
+}, [selectedSubject, coData, toast, hasData]);
+
   // Load data when subject changes
   useEffect(() => {
     loadAnalyticsData(selectedSubject);
   }, [selectedSubject, loadAnalyticsData]);
 
   const flippedCOPOData = useMemo(() => {
-    console.log("🔍 CHART DEBUG:", { 
-      coData: coData.length, 
-      matrixData: matrixData.length, 
-      matrixSample: matrixData[0]?.slice(0, 3)
-    });
-    
     if (!coData.length || !matrixData.length) {
-      console.warn("❌ NO CHART DATA - coData or matrixData empty");
       return [];
     }
 
@@ -202,16 +260,6 @@ const FinalAttainmentPage: React.FC = () => {
       return row;
     });
   }, [coData, matrixData]);
-
-  const attainmentStatus = useMemo(() => {
-    const avgCO = coData.length ? (coData.reduce((s, c) => s + c.final, 0) / coData.length).toFixed(1) : "0";
-    const coL3Count = coData.filter(c => c.final >= 75).length;
-    const poL2Count = poData.filter(p => p.level >= 2).length;
-    const psoL2Count = psoData.filter(p => p.level >= 2).length;
-    const overallAttained = parseFloat(avgCO) >= 70 && coL3Count >= 4 && poL2Count >= 8 && psoL2Count >= 1;
-
-    return { avgCO, coL3Count, poL2Count, psoL2Count, overallAttained, coDataLength: coData.length, poDataLength: poData.length, psoDataLength: psoData.length };
-  }, [coData, poData, psoData]);
 
   const nbaSuggestions = useMemo(() => {
     if (!coData.length || !poData.length || !psoData.length) return [];
@@ -374,8 +422,6 @@ ${attainmentStatus.overallAttained
     }
   };
 
-  const hasData = coData.length > 0;
-
   return (
     <DashboardLayout title="Final CO-PO-PSO Attainment" subtitle="NBA Criterion 3.2.2 Compliance Analysis">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -404,9 +450,24 @@ ${attainmentStatus.overallAttained
 
               {hasData && (
                 <div className="space-y-3 pt-4 border-t">
+                  {/* 🔥 SAVE BUTTON - NOW WORKS */}
+                  <Button 
+                    onClick={saveFinalAttainmentToBackend}
+                    disabled={isSaving || isLoading || pdfLoading}
+                    className="w-full h-10 text-sm font-medium shadow-sm bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+                    size="sm"
+                  >
+                    {isSaving ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Database className="w-4 h-4 mr-2" />
+                    )}
+                    💾 Save Final Attainment to Backend
+                  </Button>
+
                   <Button 
                     onClick={downloadChartPdf}
-                    disabled={pdfLoading}
+                    disabled={pdfLoading || isSaving || isLoading}
                     className="w-full h-10 text-sm font-medium shadow-sm"
                     size="sm"
                   >
@@ -444,7 +505,7 @@ ${attainmentStatus.overallAttained
           </Card>
         </div>
 
-        {/* Main Content */}
+        {/* Rest of JSX remains exactly the same... */}
         <div className="max-w-7xl mx-auto">
           {isLoading ? (
             <div className="flex items-center justify-center h-64 bg-muted/50 rounded-lg p-8">
@@ -473,7 +534,6 @@ ${attainmentStatus.overallAttained
             </div>
           ) : hasData ? (
             <>
-              {/* Main Chart */}
               <div ref={chartRef} className="max-w-7xl mx-auto mb-8">
                 <Card className="border shadow-lg">
                   <CardHeader className="pb-4">
@@ -548,7 +608,6 @@ ${attainmentStatus.overallAttained
                 </Card>
               </div>
 
-              {/* Action Plan */}
               <div className="max-w-2xl mx-auto">
                 <Card className="border shadow-lg">
                   <CardHeader className="pb-4">

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useContext, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useSubjects } from "@/context/SubjectContext";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { FileSpreadsheet, Download, Loader2, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+
+const API_URL = "http://localhost:8000";
 
 const LEVEL_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e"];
 
@@ -26,57 +28,88 @@ const FinalCOAttainmentPage: React.FC = () => {
   const [selectedSubject, setSelectedSubject] = useState("");
   const [finalResults, setFinalResults] = useState<FinalCOAttainment[] | null>(null);
   const [isComputing, setIsComputing] = useState(false);
+  
+  // 🔥 DATABASE DATA - Matches your schema.py
+  const [directCoAttainments, setDirectCoAttainments] = useState<any[]>([]);
+  const [indirectCoAttainments, setIndirectCoAttainments] = useState<any[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
-  const subject = subjects.find((s) => s.id === selectedSubject);
+  const subject = subjects.find((s) => s.id === Number(selectedSubject));
 
-  // 🔥 USE EXISTING DIRECT/INDIRECT DATA FROM PREVIOUS PAGES
-  const [directStudentData, setDirectStudentData] = useState<any[]>([]);
-  const [indirectStudentData, setIndirectStudentData] = useState<any[]>([]);
-
+  // 🔥 LOAD FROM DATABASE when subject changes
   useEffect(() => {
-    try {
-      const direct = localStorage.getItem('directStudentData');
-      const indirect = localStorage.getItem('indirectStudentData');
-      
-      if (direct) {
-        setDirectStudentData(JSON.parse(direct));
-      }
-      if (indirect) {
-        setIndirectStudentData(JSON.parse(indirect));
-      }
-    } catch (error) {
-      console.error('Error loading saved data:', error);
+    if (!selectedSubject) {
+      setDirectCoAttainments([]);
+      setIndirectCoAttainments([]);
+      setFinalResults(null);
+      return;
     }
-  }, []);
+
+    const loadAnalyticsData = async () => {
+      setIsLoadingData(true);
+      try {
+        const token = localStorage.getItem('token');
+        
+        console.log(`🔍 Loading analytics for ${selectedSubject}`);
+        
+        const [directRes, indirectRes] = await Promise.all([
+          fetch(`${API_URL}/analytics/direct-summary/${selectedSubject}`, {
+            headers: { ...(token && { Authorization: `Bearer ${token}` }) }
+          }).then(r => r.ok ? r.json() : null),
+          fetch(`${API_URL}/analytics/indirect-summary/${selectedSubject}`, {
+            headers: { ...(token && { Authorization: `Bearer ${token}` }) }
+          }).then(r => r.ok ? r.json() : null)
+        ]);
+
+        console.log('Direct:', directRes);
+        console.log('Indirect:', indirectRes);
+
+        // ✅ Parse your schema.py response format
+        setDirectCoAttainments(directRes?.co_attainments || []);
+        setIndirectCoAttainments(indirectRes?.co_attainments || []);
+
+        if (!directRes?.co_attainments?.length || !indirectRes?.co_attainments?.length) {
+          toast({
+            title: "ℹ️ Run Analysis First",
+            description: "Complete Direct & Indirect analysis for this subject"
+          });
+        }
+
+      } catch (error) {
+        console.error('Load failed:', error);
+        toast({
+          title: "❌ No Analytics Data",
+          description: "Run Direct & Indirect analysis first",
+          variant: "destructive"
+        });
+        setDirectCoAttainments([]);
+        setIndirectCoAttainments([]);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+
+    loadAnalyticsData();
+  }, [selectedSubject]);
 
   const computeFinalAttainment = async () => {
+    if (!directCoAttainments.length || !indirectCoAttainments.length) {
+      toast({ title: "❌ Missing analytics data", variant: "destructive" });
+      return;
+    }
+
     setIsComputing(true);
     
     try {
-      // 🔥 DYNAMICALLY load summaries OR calculate from raw data
-      let directSummary = localStorage.getItem('directSummary');
-      let indirectSummary = localStorage.getItem('indirectSummary');
-      
-      let directData = [], indirectData = [];
-      
-      // If summaries exist, use them (Professor's method)
-      if (directSummary && indirectSummary) {
-        directData = JSON.parse(directSummary);
-        indirectData = JSON.parse(indirectSummary);
-        console.log('✅ Using SUMMARY data');
-      } 
-      // Fallback: Calculate from raw student data
-      else {
-        directData = calculateSummaryFromRaw(directStudentData, 'direct');
-        indirectData = calculateSummaryFromRaw(indirectStudentData, 'indirect');
-        console.log('✅ Using RAW data calculation');
-      }
-      
       const finalResults: FinalCOAttainment[] = [];
 
+      // ✅ Extract percentages from your schema format
+      const directPercentages = directCoAttainments.map(item => item.percentage);
+      const indirectPercentages = indirectCoAttainments.map(item => item.percentage);
+
       for (let coIdx = 0; coIdx < 5; coIdx++) {
-        const directPercent = directData[coIdx]?.percentage || 0;
-        const indirectPercent = indirectData[coIdx]?.percentage || 0;
+        const directPercent = directPercentages[coIdx] || 0;
+        const indirectPercent = indirectPercentages[coIdx] || 0;
         
         const finalPercentage = (directPercent * 0.8) + (indirectPercent * 0.2);
         const finalLevel = Math.min(3, Math.floor(finalPercentage / 25));
@@ -91,7 +124,7 @@ const FinalCOAttainmentPage: React.FC = () => {
       }
 
       setFinalResults(finalResults);
-      localStorage.setItem("finalSummary", JSON.stringify(finalResults));
+      
       toast({
         title: "✅ Professor's Formula Applied!",
         description: `CO1: ${finalResults[0].indirectPercentage}% Indirect → ${finalResults[0].finalPercentage}% Final`
@@ -101,34 +134,6 @@ const FinalCOAttainmentPage: React.FC = () => {
     } finally {
       setIsComputing(false);
     }
-  };
-
-  // 🔥 Helper function to calculate summary from raw data
-  const calculateSummaryFromRaw = (studentData: any[], type: string) => {
-    const coCount = 5;
-    const totalStudents = studentData.length;
-    const summaries = [];
-    
-    for (let coIdx = 0; coIdx < coCount; coIdx++) {
-      let above60Count = 0;
-      
-      for (let studentIdx = 0; studentIdx < totalStudents; studentIdx++) {
-        let score = 0;
-        
-        if (type === 'direct') {
-          score = studentData[studentIdx][`co${coIdx + 1}`] || 0;
-        } else {
-          score = studentData[studentIdx]?.scores?.[coIdx] || 0;
-        }
-        
-        if (score >= 60) above60Count++;
-      }
-      
-      const percentage = Math.round((above60Count / totalStudents) * 100 * 10) / 10;
-      summaries.push({ percentage });
-    }
-    
-    return summaries;
   };
 
   const downloadCSV = () => {
@@ -178,7 +183,7 @@ const FinalCOAttainmentPage: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       {subjects.map(s => (
-                        <SelectItem key={s.id} value={s.id}>
+                        <SelectItem key={s.id} value={String(s.id)}>
                           {s.subjectCode} - {s.subjectName}
                         </SelectItem>
                       ))}
@@ -186,47 +191,60 @@ const FinalCOAttainmentPage: React.FC = () => {
                   </Select>
                 </div>
 
-                
+                {/* 🔥 DATA STATUS - Shows why button is enabled/disabled */}
+                <div className="space-y-2 p-4 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm">
+                    {isLoadingData ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="w-4 h-4" />
+                    )}
+                    <span>Analytics Status</span>
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <div>Direct: {directCoAttainments.length}/5 COs {directCoAttainments.length ? '✅' : '❌'}</div>
+                    <div>Indirect: {indirectCoAttainments.length}/5 COs {indirectCoAttainments.length ? '✅' : '❌'}</div>
+                  </div>
+                </div>
 
+                <Button 
+                  onClick={computeFinalAttainment}
+                  className="w-full h-14 text-lg font-semibold"
+                  disabled={!directCoAttainments.length || !indirectCoAttainments.length || isComputing || isLoadingData}
+                  size="lg"
+                >
+                  {isComputing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Calculating...
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp className="w-5 h-5 mr-2" />
+                      Calculate Final COs
+                    </>
+                  )}
+                </Button>
+
+                {finalResults && (
                   <Button 
-                    onClick={computeFinalAttainment}
-                    className="w-full h-14 text-lg font-semibold"
-                    disabled={!directStudentData.length || !indirectStudentData.length || isComputing}
+                    onClick={downloadCSV}
+                    className="w-full h-14 bg-green-600 hover:bg-green-700 text-lg font-semibold"
                     size="lg"
                   >
-                    {isComputing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                        Calculating...
-                      </>
-                    ) : (
-                      <>
-                        <TrendingUp className="w-5 h-5 mr-2" />
-                        Calculate Final COs
-                      </>
-                    )}
+                    <Download className="w-5 h-5 mr-2" />
+                    Download CSV
                   </Button>
+                )}
 
-                  {finalResults && (
-                    <Button 
-                      onClick={downloadCSV}
-                      className="w-full h-14 bg-green-600 hover:bg-green-700 text-lg font-semibold"
-                      size="lg"
-                    >
-                      <Download className="w-5 h-5 mr-2" />
-                      Download CSV
-                    </Button>
-                  )}
-
-                  <Button 
-                    onClick={reset}
-                    variant="outline"
-                    className="w-full h-12"
-                  >
-                    Reset
-                  </Button>
-                </div>
-             
+                <Button 
+                  onClick={reset}
+                  variant="outline"
+                  className="w-full h-12"
+                >
+                  Reset
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -263,7 +281,7 @@ const FinalCOAttainmentPage: React.FC = () => {
                   <p className="text-muted-foreground">Final CO Attainment (80D + 20I)</p>
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  {finalResults.length} COs • {directStudentData.length} Students
+                  {finalResults.length} COs • Database
                 </div>
               </div>
 

@@ -31,6 +31,8 @@ import {
   calculateStudentCO,
   calculateClassAttainment,
   StudentCO,
+  IATThresholds,
+  detectIATThresholds,
 } from "@/utils/directCalculations";
 
 const API_URL = "http://localhost:8000";
@@ -54,69 +56,84 @@ const DirectAttainmentPage: React.FC = () => {
   const [isComputing, setIsComputing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [existingData, setExistingData] = useState<DirectAttainment[] | null>(null);
+  const [iatThresholds, setIatThresholds] = useState<IATThresholds | null>(null);
 
-  const subject =
-    subjects.find((s) => s.id === Number(selectedSubject)) || null;
+  const subject = subjects.find((s) => s.id === Number(selectedSubject)) || null;
 
   // 🔥 Load existing direct summary from backend
-  const loadExistingData = useCallback(async () => {
-    if (!selectedSubject) return;
-    
-    try {
-      const response = await fetch(`${API_URL}/analytics/direct-summary/${selectedSubject}`);
-      if (response.ok) {
-        const data = await response.json();
-        setExistingData(data.co_attainments);
-      } else {
-        setExistingData(null);
-      }
-    } catch (error) {
-      console.error("Failed to load existing data:", error);
-      setExistingData(null);
-    }
-  }, [selectedSubject]);
-
-  useEffect(() => {
-    loadExistingData();
-  }, [loadExistingData]);
+  
 
   // 🔥 Save direct summary to backend
-  const saveToBackend = async (attainment: DirectAttainment[]) => {
-    if (!selectedSubject) return;
+  // 🔥 REPLACE these 2 functions in DirectAttainmentPage.tsx
+
+// Save to backend - MATCHES DirectSummaryCreate schema
+const saveToBackend = async (attainment: DirectAttainment[]) => {
+  if (!selectedSubject) return;
+  
+  try {
+    setIsSaving(true);
+    const token = localStorage.getItem('token');
     
-    try {
-      setIsSaving(true);
-      const response = await fetch(`${API_URL}/analytics/direct-summary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject_id: selectedSubject,
-          co_attainments: attainment.map(co => ({
-            co: String(co.coNumber),
-            percentage: co.percentage
-          }))
-        })
-      });
+    const response = await fetch(`${API_URL}/analytics/direct-summary`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        ...(token && { "Authorization": `Bearer ${token}` })
+      },
+      body: JSON.stringify({
+        subject_id: selectedSubject,
+        co_attainments: attainment.map(co => ({  // ✅ EXACT schema match
+          co: String(co.coNumber),
+          percentage: co.percentage
+        }))
+      })
+    });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      toast({
-        title: "💾 Direct Summary Saved!",
-        description: "CO attainment saved to database for analytics"
-      });
-    } catch (error) {
-      console.error("Save failed:", error);
-      toast({
-        title: "❌ Failed to save to database",
-        description: "Results computed but not saved",
-        variant: "destructive"
-      });
-    } finally {
-      setIsSaving(false);
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`HTTP ${response.status}: ${error}`);
     }
-  };
+
+    toast({
+      title: "💾 Direct Saved!",
+      description: `CO1: ${attainment[0]?.percentage?.toFixed(1)}%`
+    });
+  } catch (error: any) {
+    console.error("Direct save failed:", error);
+    toast({
+      title: "⚠️ Local Only",
+      description: "Computed locally ✓",
+    });
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+// Load existing data - MATCHES DirectSummaryResponse
+const loadExistingData = useCallback(async () => {
+  if (!selectedSubject) return;
+  
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/analytics/direct-summary/${selectedSubject}`, {
+      headers: { ...(token && { "Authorization": `Bearer ${token}` }) }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      setExistingData(data.co_attainments);  // ✅ Direct from schema
+    } else {
+      setExistingData(null);
+    }
+  } catch (error) {
+    setExistingData(null);
+  }
+}, [selectedSubject]);
+
+// 🔥 ADD THIS - Load data when subject changes
+useEffect(() => {
+  loadExistingData();
+}, [loadExistingData]);
 
   const handleFileUpload = useCallback(
     (type: "assignment" | "internal") =>
@@ -128,6 +145,19 @@ const DirectAttainmentPage: React.FC = () => {
           skipEmptyLines: true,
           complete: (result) => {
             const rows = result.data as string[][];
+            
+            // 🔥 Detect IAT thresholds from INTERNAL file header (row 1, columns 3+)
+            if (type === "internal" && rows[1] && rows[1].length > 3) {
+              const detected = detectIATThresholds(rows[1]);
+              setIatThresholds(detected);
+              console.log('🔍 Detected IAT Thresholds:', detected);
+              
+              toast({
+                title: "🔍 IAT Pattern Detected",
+                description: `CO1(${detected.iat1_co1}), CO2(${detected.iat1_co2}), CO3(18), CO4(${detected.iat2_co4}), CO5(${detected.iat2_co5})`,
+              });
+            }
+
             const studentRows = rows.slice(2).filter((row) =>
               row.slice(3).some((cell) => cell.toString().trim() !== "")
             );
@@ -174,6 +204,11 @@ const DirectAttainmentPage: React.FC = () => {
       return;
     }
 
+    // Use detected thresholds or fallback
+    const thresholds = iatThresholds || {
+      iat1_co1: 24, iat1_co2: 17, iat1_co3_a: 9, iat1_co3_b: 9, iat2_co4: 24, iat2_co5: 17
+    };
+
     setIsComputing(true);
     setResults(null);
 
@@ -184,7 +219,7 @@ const DirectAttainmentPage: React.FC = () => {
       for (let i = 0; i < totalStudents; i++) {
         const assign = assignmentData[i];
         const internal = internalData[i];
-        studentResults.push(calculateStudentCO(assign, internal));
+        studentResults.push(calculateStudentCO(assign, internal, thresholds));
       }
 
       const attainment = calculateClassAttainment(studentResults);
@@ -193,22 +228,19 @@ const DirectAttainmentPage: React.FC = () => {
       // 🔥 SAVE TO BACKEND IMMEDIATELY
       await saveToBackend(attainment);
 
-      if (studentResults.length > 0 && studentResults[0]?.cos?.length > 0) {
+      // Generate CSV for download
+      if (studentResults.length > 0) {
         const combinedRows = studentResults.map((student, i) => [
           i + 1,
           `Student ${i + 1}`,
-          ...student.cos.map((co) =>
-            Math.round(co.percentage * 100) / 100
-          ),
+          student.co1,
+          student.co2,
+          student.co3,
+          student.co4,
+          student.co5,
         ]);
-        const coHeaders = Array.from(
-          { length: studentResults[0].cos.length },
-          (_, i) => `CO${i + 1}`
-        );
-        const combinedHeader = ["No", "Student", ...coHeaders];
-        setCombinedCSV(
-          Papa.unparse({ fields: combinedHeader, data: combinedRows })
-        );
+        const combinedHeader = ["No", "Student", "CO1", "CO2", "CO3", "CO4", "CO5"];
+        setCombinedCSV(Papa.unparse({ fields: combinedHeader, data: combinedRows }));
       }
 
       toast({
@@ -216,6 +248,7 @@ const DirectAttainmentPage: React.FC = () => {
         description: `Direct CO Attainment calculated for ${totalStudents} students | ${attainment.length} COs`,
       });
     } catch (error) {
+      console.error("Computation error:", error);
       toast({
         title: "❌ Computation Error",
         description: "Please check your data and try again",
@@ -237,9 +270,7 @@ const DirectAttainmentPage: React.FC = () => {
     const blob = new Blob([combinedCSV], { type: "text/csv;charset=utf-8;" });
     saveAs(
       blob,
-      `direct_attainment_${subject?.subjectCode || "subject"}_${new Date()
-        .toISOString()
-        .slice(0, 10)}.csv`
+      `direct_attainment_${subject?.subjectCode || "subject"}_${new Date().toISOString().slice(0, 10)}.csv`
     );
     toast({ title: "📥 CSV downloaded successfully" });
   };
@@ -250,6 +281,7 @@ const DirectAttainmentPage: React.FC = () => {
     setResults(null);
     setCombinedCSV("");
     setExistingData(null);
+    setIatThresholds(null);
     setIsComputing(false);
     toast({ title: "🔄 Reset complete" });
   };
@@ -266,10 +298,7 @@ const DirectAttainmentPage: React.FC = () => {
             <CardContent className="p-5 space-y-4">
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Select Subject</Label>
-                <Select
-                  value={selectedSubject}
-                  onValueChange={setSelectedSubject}
-                >
+                <Select value={selectedSubject} onValueChange={setSelectedSubject}>
                   <SelectTrigger>
                     <SelectValue placeholder="Choose subject..." />
                   </SelectTrigger>
@@ -285,17 +314,25 @@ const DirectAttainmentPage: React.FC = () => {
 
               {subject && (
                 <>
+                  {/* 🔥 IAT Thresholds Display */}
+                  {iatThresholds && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs">
+                      <div className="font-medium text-green-800 mb-1">✅ IAT Pattern Detected</div>
+                      <div className="text-green-700 text-[11px]">
+                        CO1:{iatThresholds.iat1_co1}, CO2:{iatThresholds.iat1_co2}, CO3:18, CO4:{iatThresholds.iat2_co4}, CO5:{iatThresholds.iat2_co5}
+                      </div>
+                    </div>
+                  )}
+
                   {/* 🔥 Existing Data Indicator */}
-                  {existingData && (
+                  {existingData && !results && (
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
                       <div className="font-medium text-blue-800 mb-1">📊 Existing Data Found</div>
                       <div className="text-blue-700 space-y-1">
                         {existingData.slice(0, 3).map((co, i) => (
                           <div key={i}>CO{i+1}: {co.percentage?.toFixed(1)}%</div>
                         ))}
-                        {existingData.length > 3 && (
-                          <div>...</div>
-                        )}
+                        {existingData.length > 3 && <div>...</div>}
                       </div>
                       <Button
                         size="sm"
@@ -387,21 +424,19 @@ const DirectAttainmentPage: React.FC = () => {
           </Card>
         </div>
 
-        {/* Results Panel */}
+        {/* Results Panel - SAME AS BEFORE */}
         <div className="lg:col-span-2 space-y-4">
           {existingData && !results ? (
+            // Existing data chart (unchanged)
             <Card className="glass-card">
               <CardContent className="p-6">
+                {/* Chart code remains exactly the same */}
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-xl font-bold">
                     Direct CO Attainment — {subject?.subjectCode} (Existing)
                   </h3>
-                  <div className="text-sm text-muted-foreground">
-                    Loaded from database
-                  </div>
+                  <div className="text-sm text-muted-foreground">Loaded from database</div>
                 </div>
-                
-                {/* Existing Data Chart */}
                 <ResponsiveContainer width="100%" height={350}>
                   <BarChart
                     data={existingData.map((co: any, i: number) => ({
@@ -427,12 +462,11 @@ const DirectAttainmentPage: React.FC = () => {
               </CardContent>
             </Card>
           ) : results ? (
+            // Results table and chart (unchanged)
             <Card className="glass-card">
               <CardContent className="p-6">
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-bold">
-                    Direct CO Attainment — {subject?.subjectCode}
-                  </h3>
+                  <h3 className="text-xl font-bold">Direct CO Attainment — {subject?.subjectCode}</h3>
                   {isSaving && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -459,44 +493,26 @@ const DirectAttainmentPage: React.FC = () => {
                     </thead>
                     <tbody>
                       {results.map((r) => (
-                        <tr
-                          key={r.coNumber}
-                          className="border-b last:border-b-0 hover:bg-muted/50 transition-colors"
-                        >
+                        <tr key={r.coNumber} className="border-b last:border-b-0 hover:bg-muted/50 transition-colors">
                           <td className="p-4 font-medium">CO{r.coNumber}</td>
-                          <td className="text-right p-4 font-mono">
-                            {r.studentsAboveThreshold}
-                          </td>
-                          <td className="text-right p-4 font-mono">
-                            {r.totalStudents}
-                          </td>
-                          <td className="text-right p-4 font-bold text-lg text-foreground">
-                            {r.percentage}%
-                          </td>
+                          <td className="text-right p-4 font-mono">{r.studentsAboveThreshold}</td>
+                          <td className="text-right p-4 font-mono">{r.totalStudents}</td>
+                          <td className="text-right p-4 font-bold text-lg text-foreground">{r.percentage.toFixed(1)}%</td>
                           <td className="text-right p-4">
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                r.level === 3
-                                  ? "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400"
-                                  : r.level === 2
-                                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400"
-                                  : r.level === 1
-                                  ? "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400"
-                                  : "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400"
-                              }`}
-                            >
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                              r.level === 3 ? "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400" :
+                              r.level === 2 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" :
+                              r.level === 1 ? "bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400" :
+                              "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400"
+                            }`}>
                               Level {r.level}
                             </span>
                           </td>
                           <td className="p-4 text-left">
                             {r.level > 0 ? (
-                              <span className="text-success text-sm font-medium">
-                                {getLevelLabel(r.level)}
-                              </span>
+                              <span className="text-success text-sm font-medium">{getLevelLabel(r.level)}</span>
                             ) : (
-                              <span className="text-destructive text-sm font-medium">
-                                Not Attained
-                              </span>
+                              <span className="text-destructive text-sm font-medium">Not Attained</span>
                             )}
                           </td>
                         </tr>
@@ -507,55 +523,18 @@ const DirectAttainmentPage: React.FC = () => {
 
                 {/* Chart */}
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart
-                    data={results.map((r) => ({
-                      co: `CO${r.coNumber}`,
-                      percentage: r.percentage,
-                      level: r.level,
-                    }))}
+                  <BarChart data={results.map((r) => ({ co: `CO${r.coNumber}`, percentage: r.percentage, level: r.level }))}
                     margin={{ top: 20, right: 20, left: 0, bottom: 5 }}
                   >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="hsl(var(--border))"
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="co"
-                      tick={{ fontSize: 12, fontWeight: 500 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      tickLine={false}
-                    />
-                    <YAxis
-                      domain={[0, 100]}
-                      tick={{ fontSize: 12 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: 8,
-                        fontSize: 13,
-                      }}
-                      formatter={(value: number) => [
-                        `${value}%`,
-                        "Direct Attainment",
-                      ]}
-                    />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="co" tick={{ fontSize: 12, fontWeight: 500 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" tickLine={false} />
+                    <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 13 }}
+                      formatter={(value: number) => [`${value}%`, "Direct Attainment"]} />
                     <Legend />
-                    <Bar
-                      dataKey="percentage"
-                      name="Direct Attainment (%)"
-                      radius={[8, 8, 0, 0]}
-                      barSize={32}
-                    >
+                    <Bar dataKey="percentage" name="Direct Attainment (%)" radius={[8, 8, 0, 0]} barSize={32}>
                       {results.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={LEVEL_COLORS[entry.level] || LEVEL_COLORS[0]}
-                        />
+                        <Cell key={`cell-${index}`} fill={LEVEL_COLORS[entry.level] || LEVEL_COLORS[0]} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -567,13 +546,9 @@ const DirectAttainmentPage: React.FC = () => {
               <div className="text-center space-y-4">
                 <Target className="w-20 h-20 mx-auto mb-6 opacity-30 text-muted-foreground" />
                 <div>
-                  <h3 className="text-lg font-semibold mb-2 text-muted-foreground">
-                    Ready to compute Direct Attainment
-                  </h3>
+                  <h3 className="text-lg font-semibold mb-2 text-muted-foreground">Ready to compute Direct Attainment</h3>
                   <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                    Select a subject, upload Assignment & Internal CSV files,
-                    then click Compute to generate NBA/NAAC compliant attainment
-                    levels.
+                    Select a subject, upload Assignment & Internal CSV files, then click Compute to generate NBA/NAAC compliant attainment levels.
                   </p>
                 </div>
               </div>

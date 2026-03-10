@@ -9,6 +9,7 @@ export interface User {
 }
 
 export interface Subject {
+  courseCode: string;
   id: number;
   subjectCode: string;
   subjectName: string;

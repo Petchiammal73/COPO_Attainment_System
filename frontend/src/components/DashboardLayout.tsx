@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { path: "/co-po-mapping", label: "CO-PO Mapping", icon: Grid3X3 },
   { path:"/final-attainment", label:"Final Attainment" ,icon:Award},
   { path: "/analytics", label: "Analytics", icon: TrendingUp },
+  { path:"/nba-popsoanalysis", label:"NBA Attainment", icon: BarChart3},
   { path: "/university-prediction", label: "Prediction", icon: ChartLine},
   
 

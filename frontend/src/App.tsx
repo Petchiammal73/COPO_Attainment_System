@@ -18,6 +18,7 @@ import FinalCoAttainment from "./pages/FinalCoAttainment";
 import FinalAttainmentPage from "./pages/FinalAttainmentPage";
 import UniversityPrediction from "./pages/UniversityPredictionPage";
 import { AnalyticsProvider } from '@/context/AnalyticsContext';
+import NBAPoPsoAnalysis from './pages/NBAPoPsoAnalysis';
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const AppRoutes = () => {
       <Route path="/final-attainment" element={<ProtectedRoute><FinalAttainmentPage/></ProtectedRoute>}/>
       <Route path="/co-po-mapping" element={<ProtectedRoute><COPOMappingPage /></ProtectedRoute>} />
       <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
+      <Route path="/nba-popsoanalysis" element={<ProtectedRoute><NBAPoPsoAnalysis /></ProtectedRoute>} />
       <Route path="/university-prediction" element={<ProtectedRoute><UniversityPrediction /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>

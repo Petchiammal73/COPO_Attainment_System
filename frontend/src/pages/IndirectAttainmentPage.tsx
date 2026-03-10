@@ -63,67 +63,79 @@ const IndirectAttainmentPage: React.FC = () => {
   const subject = subjects.find((s) => s.id === Number(selectedSubject)) || null;
 
   // 🔥 Load existing indirect summary from backend
-  const loadExistingData = useCallback(async () => {
-    if (!selectedSubject) return;
-    
-    try {
-      const response = await fetch(`${API_URL}/analytics/indirect-summary/${selectedSubject}`);
-      if (response.ok) {
-        const data = await response.json();
-        setExistingData(data.co_attainments);
-      } else {
-        setExistingData(null);
-      }
-    } catch (error) {
-      console.error("Failed to load existing data:", error);
-      setExistingData(null);
-    }
-  }, [selectedSubject]);
-
-  useEffect(() => {
-    loadExistingData();
-  }, [loadExistingData]);
+  
 
   // 🔥 Save indirect summary to backend
-  const saveToBackend = async (attainment: any[]) => {
-    if (!selectedSubject) return;
+ // 🔥 REPLACE these 2 functions in IndirectAttainmentPage.tsx
+
+// Save to backend - MATCHES IndirectSummaryCreate schema
+const saveToBackend = async (attainment: any[]) => {
+  if (!selectedSubject) return;
+  
+  try {
+    setIsSaving(true);
+    const token = localStorage.getItem('token');
     
-    try {
-      setIsSaving(true);
-      const response = await fetch(`${API_URL}/analytics/indirect-summary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject_id: selectedSubject,
-          co_attainments: attainment.map((co) => ({
-            co: String(co.coNumber),
-            percentage: co.percentage,
-            part_a_avg: co.partAAvg,
-            part_b_avg: co.partBAvg,
-            level: co.level,
-          })),
-        }),
-      });
+    const response = await fetch(`${API_URL}/analytics/indirect-summary`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        ...(token && { "Authorization": `Bearer ${token}` })
+      },
+      body: JSON.stringify({
+        subject_id: selectedSubject,
+        co_attainments: attainment.map(co => ({  // ✅ EXACT schema match
+          co: String(co.coNumber),
+          percentage: co.percentage
+        }))
+      })
+    });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      toast({
-        title: "💾 Indirect Summary Saved!",
-        description: "CO attainment saved to database for Final CO calculation",
-      });
-    } catch (error) {
-      console.error("Save failed:", error);
-      toast({
-        title: "❌ Failed to save to database",
-        description: "Results computed but not saved",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`HTTP ${response.status}: ${error}`);
     }
-  };
+
+    toast({
+      title: "💾 Indirect Saved!",
+      description: `CO1: ${attainment[0]?.percentage?.toFixed(1)}%`
+    });
+  } catch (error: any) {
+    console.error("Indirect save failed:", error);
+    toast({
+      title: "⚠️ Local Only",
+      description: "Computed locally ✓",
+    });
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+// Load existing data - MATCHES IndirectSummaryResponse  
+const loadExistingData = useCallback(async () => {
+  if (!selectedSubject) return;
+  
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/analytics/indirect-summary/${selectedSubject}`, {
+      headers: { ...(token && { "Authorization": `Bearer ${token}` }) }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      setExistingData(data.co_attainments);  // ✅ Direct from schema
+    } else {
+      setExistingData(null);
+    }
+  } catch (error) {
+    setExistingData(null);
+  }
+}, [selectedSubject]);
+
+// 🔥 ADD THIS - Load data when subject changes
+useEffect(() => {
+  loadExistingData();
+}, [loadExistingData]);
 
   const handleFileUpload = useCallback(
     (type: "partA" | "partB") => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -464,25 +476,64 @@ const IndirectAttainmentPage: React.FC = () => {
                 </div>
                 
                 <ResponsiveContainer width="100%" height={350}>
-                  <BarChart
-                    data={existingData.map((co: any, i: number) => ({
-                      co: `CO${i + 1}`,
-                      percentage: co.percentage || 0,
-                      level: getAttainmentLevel(co.percentage || 0),
-                    }))}
-                    margin={{ top: 20, right: 20, left: 0, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="co" tick={{ fontSize: 12, fontWeight: 500 }} stroke="hsl(var(--muted-foreground))" />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="percentage" name="Indirect Attainment (%)" radius={[8, 8, 0, 0]} barSize={32}>
-                      {existingData.map((co: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={LEVEL_COLORS[getAttainmentLevel(co.percentage || 0)]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
+                 <BarChart
+  data={existingData.map((co: any, i: number) => ({
+    co: `CO${i + 1}`,
+    percentage: co.percentage || 0,
+    level: getAttainmentLevel(co.percentage || 0),
+  }))}
+  margin={{ top: 50, right: 30, left: 20, bottom: 50 }}
+>
+  <CartesianGrid
+    strokeDasharray="3 3"
+    stroke="hsl(var(--border))"
+    vertical={false}
+  />
+
+  <XAxis
+    dataKey="co"
+    tick={{ fontSize: 12, fontWeight: 500 }}
+    tickLine={false}
+    stroke="hsl(var(--muted-foreground))"
+    label={{
+      value: "Course Outcomes (CO)",
+      position: "insideBottom",
+      offset: -10,
+    }}
+  />
+
+  <YAxis
+    domain={[0, 100]}
+    width={60}
+    tick={{ fontSize: 12 }}
+    tickLine={false}
+    stroke="hsl(var(--muted-foreground))"
+    label={{
+      value: "Attainment Percentage (%)",
+      angle: -90,
+      position: "insideLeft",
+      offset: -5,
+      style: { textAnchor: "middle" },
+    }}
+  />
+
+  <Tooltip />
+  <Legend verticalAlign="top" height={36} />
+
+  <Bar
+    dataKey="percentage"
+    name="Indirect Attainment (%)"
+    radius={[8, 8, 0, 0]}
+    barSize={32}
+  >
+    {existingData.map((co: any, index: number) => (
+      <Cell
+        key={`cell-${index}`}
+        fill={LEVEL_COLORS[getAttainmentLevel(co.percentage || 0)]}
+      />
+    ))}
+  </Bar>
+</BarChart> 
                 </ResponsiveContainer>
               </CardContent>
             </Card>
@@ -523,7 +574,7 @@ const IndirectAttainmentPage: React.FC = () => {
                           className="border-b last:border-b-0 hover:bg-muted/50 transition-colors"
                         >
                           <td className="p-4 font-medium max-w-[200px] truncate">
-                            CO{r.coNumber}: {r.coName}
+                            CO{r.coNumber}
                           </td>
                           <td className="text-right p-4 font-mono">{r.partAAvg}%</td>
                           <td className="text-right p-4 font-mono">{r.partBAvg}%</td>
@@ -551,57 +602,81 @@ const IndirectAttainmentPage: React.FC = () => {
                   </table>
                 </div>
 
-                <ResponsiveContainer width="100%" height={350}>
-                  <BarChart
-                    data={results.map((r) => ({
-                      co: `CO${r.coNumber}`,
-                      percentage: r.percentage,
-                      level: r.level,
-                    }))}
-                    margin={{ top: 20, right: 20, left: 0, bottom: 5 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="hsl(var(--border))"
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="co"
-                      tick={{ fontSize: 12, fontWeight: 500 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      tickLine={false}
-                    />
-                    <YAxis
-                      domain={[0, 100]}
-                      tick={{ fontSize: 12 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: 8,
-                        fontSize: 13,
-                      }}
-                      formatter={(value: number) => [`${value}%`, "Indirect Attainment"]}
-                    />
-                    <Legend />
-                    <Bar
-                      dataKey="percentage"
-                      name="Indirect Attainment (%)"
-                      radius={[8, 8, 0, 0]}
-                      barSize={32}
-                    >
-                      {results.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={LEVEL_COLORS[entry.level] || LEVEL_COLORS[0]}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={380}>
+  <BarChart
+    data={results.map((r) => ({
+      co: `CO${r.coNumber}`,
+      percentage: r.percentage,
+      level: r.level,
+    }))}
+    margin={{ top: 30, right: 30, left: 20, bottom: 60 }}
+  >
+    <CartesianGrid
+      strokeDasharray="3 3"
+      stroke="hsl(var(--border))"
+      vertical={false}
+    />
+
+    {/* Legend Properly Positioned */}
+    <Legend
+      verticalAlign="top"
+      align="center"
+      wrapperStyle={{ top: 0 }}
+      height={36}
+    />
+
+    <XAxis
+      dataKey="co"
+      tick={{ fontSize: 12, fontWeight: 500 }}
+      tickLine={false}
+      stroke="hsl(var(--muted-foreground))"
+      label={{
+        value: "Course Outcomes (CO)",
+        position: "insideBottom",
+        offset: -10,
+      }}
+    />
+
+    <YAxis
+      domain={[0, 100]}
+      width={60}
+      tick={{ fontSize: 12 }}
+      tickLine={false}
+      stroke="hsl(var(--muted-foreground))"
+      label={{
+        value: "Attainment Percentage (%)",
+        angle: -90,
+        position: "insideLeft",
+        offset: -5,
+        style: { textAnchor: "middle" },
+      }}
+    />
+
+    <Tooltip
+      contentStyle={{
+        background: "hsl(var(--card))",
+        border: "1px solid hsl(var(--border))",
+        borderRadius: 8,
+        fontSize: 13,
+      }}
+      formatter={(value: number) => [`${value}%`, "Indirect Attainment"]}
+    />
+
+    <Bar
+      dataKey="percentage"
+      name="Indirect Attainment (%)"
+      radius={[8, 8, 0, 0]}
+      barSize={32}
+    >
+      {results.map((entry, index) => (
+        <Cell
+          key={`cell-${index}`}
+          fill={LEVEL_COLORS[entry.level] || LEVEL_COLORS[0]}
+        />
+      ))}
+    </Bar>
+  </BarChart>
+</ResponsiveContainer>
               </CardContent>
             </Card>
           ) : (

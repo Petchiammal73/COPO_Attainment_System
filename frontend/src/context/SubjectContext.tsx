@@ -21,6 +21,7 @@ export const SubjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Utility: convert backend subject to frontend Subject
   const toSubject = (backend: any): Subject => ({
     id: backend.id,
+    courseCode:backend.course_code,
     subjectCode: backend.subject_code,
     subjectName: backend.subject_name,
     academicYear: backend.academic_year,
@@ -40,6 +41,7 @@ export const SubjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const fetchSubjects = async () => {
     try {
+      console.log("TOKEN:", token);
       setLoading(true);
       const response = await fetch('http://localhost:8000/subjects/', {
         headers: {
@@ -69,6 +71,7 @@ export const SubjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
+          course_code:subject.courseCode,
           subject_code: subject.subjectCode,
           subject_name: subject.subjectName,
           academic_year: subject.academicYear,
@@ -123,6 +126,7 @@ export const SubjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        course_code:subject.courseCode,
         subject_code: subject.subjectCode,
         subject_name: subject.subjectName,
         academic_year: subject.academicYear,
